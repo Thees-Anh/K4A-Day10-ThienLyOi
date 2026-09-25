@@ -1,8 +1,15 @@
 {
+  "latest_published": "2026-07-22",
+  "oldest_published": "2026-03-28",
+  "stale_rows": 1,
+  "total_rows": 24,
   "is_fresh": true,
   "stale_ratio": 0.041666666666666664,
-  "stale_count": 1,
-  "total_count": 24,
+  "stale_percentage": 4.166666666666666,
   "threshold_days": 180,
-  "max_allowed_stale_ratio": 0.25
+  "max_stale_ratio": 0.25,
+  "known_age_rows": 24,
+  "missing_age_rows": 0,
+  "invalid_age_rows": 0,
+  "warning": null
 }

@@ -41,6 +41,12 @@ class Paths:
     repaired_answers: Path
     comparison_report: Path
 
+    @property
+    def test_set_json(self) -> Path:
+        """Canonical alias used by the benchmark self-check command."""
+
+        return self.eval_testset
+
 
 @dataclass(frozen=True)
 class Settings:

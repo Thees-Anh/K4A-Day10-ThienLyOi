@@ -1,0 +1,92 @@
+[
+  {
+    "id": "eval_001",
+    "question_type": "summary",
+    "question": "What is the summary of the paper \"Agentic Retrieval-Augmented Generation for Knowledge-Intensive Tasks\"?",
+    "ground_truth": "Retrieval-Augmented Generation (RAG) significantly improves large language model accuracy by grounding responses in retrieved passages.",
+    "ground_truth_doc_ids": [
+      "10.1145/3637528.3671801"
+    ]
+  },
+  {
+    "id": "eval_002",
+    "question_type": "summary",
+    "question": "What is the summary of the paper \"Advanced Perspectives on Agentic Retrieval-Augmented Generation for Knowledge-Intensive Tasks\"?",
+    "ground_truth": "An extended empirical study on etrieval-Augmented Generation (RAG) significantly improves large language model accuracy by grounding responses in retrieved passages.",
+    "ground_truth_doc_ids": [
+      "10.1145/3637528.3671813"
+    ]
+  },
+  {
+    "id": "eval_003",
+    "question_type": "summary",
+    "question": "What is the summary of the paper \"Data Observability and Quality Gates for Production RAG Systems\"?",
+    "ground_truth": "Silent data corruption in RAG pipelines degrades LLM answer faithfulness without throwing runtime errors.",
+    "ground_truth_doc_ids": [
+      "10.1145/3637528.3671802"
+    ]
+  },
+  {
+    "id": "eval_004",
+    "question_type": "authors",
+    "question": "Who are the authors of \"Hybrid Search Architectures: Combining BM25 with Dense Representations\"?",
+    "ground_truth": "Dat Tran, Lan Pham",
+    "ground_truth_doc_ids": [
+      "10.1145/3637528.3671811"
+    ]
+  },
+  {
+    "id": "eval_005",
+    "question_type": "authors",
+    "question": "Who are the authors of \"Advanced Perspectives on Hybrid Search Architectures: Combining BM25 with Dense Representations\"?",
+    "ground_truth": "Dat Tran, Lan Pham",
+    "ground_truth_doc_ids": [
+      "10.1145/3637528.3671823"
+    ]
+  },
+  {
+    "id": "eval_006",
+    "question_type": "authors",
+    "question": "Who are the authors of \"Chunking Strategies for Technical Documentation Retrieval\"?",
+    "ground_truth": "Long Trinh, Ha Chu",
+    "ground_truth_doc_ids": [
+      "10.1145/3637528.3671809"
+    ]
+  },
+  {
+    "id": "eval_007",
+    "question_type": "date",
+    "question": "When was \"Freshness SLAs for Real-Time LLM Knowledge Augmentation\" published?",
+    "ground_truth": "2026-07-05",
+    "ground_truth_doc_ids": [
+      "10.1145/3637528.3671804"
+    ]
+  },
+  {
+    "id": "eval_008",
+    "question_type": "date",
+    "question": "When was \"Advanced Perspectives on Freshness SLAs for Real-Time LLM Knowledge Augmentation\" published?",
+    "ground_truth": "2026-06-04",
+    "ground_truth_doc_ids": [
+      "10.1145/3637528.3671816"
+    ]
+  },
+  {
+    "id": "eval_009",
+    "question_type": "categories",
+    "question": "What categories does the paper \"Chunking Strategies for Technical Documentation Retrieval\" belong to?",
+    "ground_truth": "Information Retrieval, Natural Language Processing",
+    "ground_truth_doc_ids": [
+      "10.1145/3637528.3671809"
+    ]
+  },
+  {
+    "id": "eval_010",
+    "question_type": "categories",
+    "question": "What categories does the paper \"Evaluating Retrieval Precision with Token F1 and LLM Judges\" belong to?",
+    "ground_truth": "Natural Language Processing, Evaluation Methodology",
+    "ground_truth_doc_ids": [
+      "10.1145/3637528.3671805"
+    ]
+  }
+]
