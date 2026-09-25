@@ -1,0 +1,8 @@
+{
+  "is_fresh": true,
+  "stale_ratio": 0.041666666666666664,
+  "stale_count": 1,
+  "total_count": 24,
+  "threshold_days": 180,
+  "max_allowed_stale_ratio": 0.25
+}
