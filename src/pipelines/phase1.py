@@ -1,138 +1,116 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import os
+from dataclasses import dataclass
+import logging
 from typing import Any
 
-from core.config import load_settings
-from core.utils import read_json, write_csv, write_json
+from core.config import Settings, load_settings
+from core.utils import now_utc
 from evaluation.metrics import evaluate_pipeline
-from evaluation.testset import build_test_set, load_or_create_test_set
+from evaluation.testset import build_test_set
 from ingestion.cleaning import build_clean_dataframe
-from ingestion.crossref import fetch_source_records
-from observability.quality import run_data_quality_checks
+from ingestion.crossref import fetch_source_records, load_raw_records
+from observability.quality import build_freshness_report, run_data_quality_checks
 from observability.reporting import generate_phase1_report
+from pipelines._common import (
+    require_artifacts,
+    require_clean_dataframe,
+    require_metrics,
+    require_quality_success,
+    save_dataframe,
+)
 from retrieval.index import LocalEmbeddingIndex
 
 
-def _source_summary(settings, records: list[Any], run_at: datetime) -> dict[str, Any]:
-    return {
-        "source": settings.source_api,
-        "mode": "live_api_with_offline_fallback" if settings.refresh_source else "offline_snapshot",
-        "query": settings.source_query,
-        "filter": settings.source_filter,
-        "raw_records": len(records),
-        "max_results": settings.max_results,
-        "run_at": run_at.isoformat(),
-    }
+LOGGER = logging.getLogger(__name__)
 
 
-def _build_or_load_index(df, settings) -> LocalEmbeddingIndex:
-    """Build a fresh baseline index, reusing a valid local index on model failure."""
-
-    try:
-        return LocalEmbeddingIndex.build(
-            df,
-            settings,
-            embeddings_output_path=settings.paths.embeddings_json,
-        )
-    except Exception as build_error:
-        manifest_path = settings.paths.embeddings_json
-        if not manifest_path.exists():
-            raise RuntimeError(
-                "Unable to build the embedding index and no local manifest is available."
-            ) from build_error
-        try:
-            index = LocalEmbeddingIndex.load(settings, embeddings_path=manifest_path)
-            if index.collection.count() >= len(df):
-                return index
-        except Exception:
-            pass
-        raise RuntimeError("Unable to build or load the baseline embedding index.") from build_error
+@dataclass(frozen=True)
+class Phase1Result:
+    source_summary: dict[str, Any]
+    metrics: dict[str, Any]
+    quality: dict[str, Any]
+    freshness: dict[str, Any]
 
 
-def _run_optional_agent_demo(settings, index: LocalEmbeddingIndex) -> None:
-    """Run a small agent demo only when explicitly requested by the operator."""
-
-    if os.getenv("RUN_AGENT_DEMO", "").lower() not in {"1", "true", "yes"}:
-        return
-
-    from retrieval.agent import build_agent, run_agent_question
-
-    test_set = read_json(settings.paths.eval_testset)
-    questions = [item["question"] for item in test_set[:3] if isinstance(item, dict)]
-    agent = build_agent(settings, index)
-    answers = [
-        {"question": question, "answer": run_agent_question(agent, question)}
-        for question in questions
-    ]
-    write_json(settings.paths.demo_answers, answers)
+def _load_source_records(settings: Settings):
+    raw_path = settings.paths.raw_records_json
+    if settings.refresh_source or not raw_path.is_file():
+        LOGGER.info("Fetching source records (with offline fallback when available).")
+        return fetch_source_records(settings), "fetch_or_fallback"
+    LOGGER.info("Loading raw records from %s", raw_path)
+    return load_raw_records(raw_path), "cached_raw"
 
 
-def main() -> None:
-    """Run the complete baseline data, quality, vector, and evaluation flow."""
-
-    settings = load_settings()
-    run_at = datetime.now(timezone.utc)
-
-    print("[1/8] Đang lấy dữ liệu Crossref (offline snapshot hoặc live API)...")
-    records = fetch_source_records(settings)
-    if not records:
-        raise RuntimeError("Không tải được bản ghi Crossref hợp lệ.")
-    source_summary = _source_summary(settings, records, run_at)
-
-    print("[2/8] Đang làm sạch dữ liệu và tính age_days...")
-    dataframe = build_clean_dataframe(records, run_at)
-    if dataframe.empty:
-        raise RuntimeError("Dataframe sạch không có bản ghi hợp lệ.")
-    write_csv(dataframe, settings.paths.clean_csv)
-    write_json(settings.paths.clean_json, dataframe.to_dict(orient="records"))
-
-    print("[3/8] Đang chạy Great Expectations quality gate...")
-    quality = run_data_quality_checks(dataframe, settings, "baseline")
-    freshness = quality["freshness"]
-    if not quality["success"]:
-        raise RuntimeError(
-            "Data Quality Gate thất bại; baseline pipeline dừng trước khi đưa dữ liệu vào vector store."
-        )
-
-    print("[4/8] Đang tạo hoặc tải evaluation test set...")
-    if settings.refresh_test_set:
-        build_test_set(dataframe, settings.paths.eval_testset)
+def _ensure_test_set(settings: Settings, clean_df) -> None:
+    if settings.refresh_test_set or not settings.paths.eval_testset.is_file():
+        LOGGER.info("Building evaluation test set.")
+        build_test_set(clean_df, settings.paths.eval_testset)
     else:
-        load_or_create_test_set(dataframe, settings.paths.eval_testset)
+        LOGGER.info("Reusing evaluation test set at %s", settings.paths.eval_testset)
 
-    print("[5/8] Đang tạo embedding và ChromaDB index...")
-    index = _build_or_load_index(dataframe, settings)
 
-    print("[6/8] Đang đánh giá retrieval trên test set...")
+def main(settings: Settings | None = None) -> Phase1Result:
+    """Run the clean-data pipeline and return its observable results."""
+    settings = settings or load_settings()
+    records, source_mode = _load_source_records(settings)
+    if not records:
+        raise RuntimeError("Source ingestion returned no records.")
+
+    clean_df = build_clean_dataframe(records, now_utc())
+    require_clean_dataframe(clean_df, "baseline cleaning")
+    save_dataframe(clean_df, settings.paths.clean_csv, settings.paths.clean_json)
+
+    quality = run_data_quality_checks(clean_df, settings, "baseline")
+    freshness = build_freshness_report(clean_df, settings, settings.paths.freshness_report)
+    require_quality_success(quality, "baseline")
+
+    index = LocalEmbeddingIndex.build(clean_df, settings, settings.paths.embeddings_json)
+    _ensure_test_set(settings, clean_df)
     evaluation = evaluate_pipeline(
-        settings=settings,
-        index=index,
-        test_set_path=settings.paths.eval_testset,
-        metrics_output_path=settings.paths.baseline_metrics,
-        answers_output_path=settings.paths.baseline_answers,
+        settings,
+        index,
+        settings.paths.eval_testset,
+        settings.paths.baseline_metrics,
+        settings.paths.baseline_answers,
     )
+    metrics = dict(evaluation.summary)
+    require_metrics(metrics, "baseline")
 
-    print("[7/8] Đang tạo báo cáo Markdown...")
+    source_summary = {
+        "source_api": settings.source_api,
+        "source_query": settings.source_query,
+        "source_mode": source_mode,
+        "raw_records": len(records),
+        "clean_records": len(clean_df),
+    }
     generate_phase1_report(
         settings.paths.baseline_report,
         source_summary,
-        evaluation.summary,
+        metrics,
         quality,
         freshness,
     )
 
-    print("[8/8] Đang chạy agent demo tùy chọn...")
-    try:
-        _run_optional_agent_demo(settings, index)
-    except Exception as exc:
-        # Agent demo is optional; a provider failure must not invalidate the
-        # reproducible baseline metrics already written to disk.
-        print(f"Agent demo bị bỏ qua: {exc}")
-
-    print(
-        "Tín hiệu hoàn thành: Baseline pipeline thành công "
-        f"({len(dataframe)} tài liệu, quality={quality['success']}, "
-        f"retrieval_hit_rate={evaluation.summary['retrieval_hit_rate']:.4f})"
+    require_artifacts(
+        [
+            settings.paths.raw_records_json,
+            settings.paths.clean_csv,
+            settings.paths.clean_json,
+            settings.paths.embeddings_json,
+            settings.paths.eval_testset,
+            settings.paths.baseline_metrics,
+            settings.paths.baseline_answers,
+            settings.paths.baseline_quality_report,
+            settings.paths.freshness_report,
+            settings.paths.baseline_report,
+        ],
+        "baseline pipeline",
     )
+    print(
+        "Baseline complete: "
+        f"{len(clean_df)} records, "
+        f"hit_rate={metrics['retrieval_hit_rate']:.3f}, "
+        f"token_f1={metrics['mean_token_f1']:.3f}"
+    )
+    return Phase1Result(source_summary, metrics, quality, freshness)
