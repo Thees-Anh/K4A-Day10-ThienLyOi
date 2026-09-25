@@ -117,7 +117,7 @@ def evaluate_pipeline(
         answers.append(
             {
                 "id": item["id"],
-                "question_type": item["question_type"],
+                "question_type": item.get("type", item.get("question_type", "unknown")),
                 "question": item["question"],
                 "ground_truth": item["ground_truth"],
                 "ground_truth_doc_ids": item["ground_truth_doc_ids"],

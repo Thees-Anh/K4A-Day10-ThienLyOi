@@ -20,7 +20,11 @@ class AnswerResult:
 def _extract_answer(question: str, top_result: SearchResult) -> str:
     lowered = question.lower()
     metadata = top_result.metadata
-    if "who authored" in lowered or "list the authors" in lowered:
+    if (
+        "who authored" in lowered
+        or "who are the authors" in lowered
+        or "list the authors" in lowered
+    ):
         return metadata["authors_joined"]
     if "when was" in lowered or "publication date" in lowered or "published on" in lowered:
         return metadata["published"]
@@ -30,7 +34,7 @@ def _extract_answer(question: str, top_result: SearchResult) -> str:
 
 
 def answer_question(question: str, settings: Settings, index: LocalEmbeddingIndex, top_k: int | None = None) -> AnswerResult:
-    title_match = re.search(r"'([^']+)'", question)
+    title_match = re.search(r"['\"]([^'\"]+)['\"]", question)
     exact = index.lookup(title_match.group(1)) if title_match else None
     retrieved = index.search(question, top_k=top_k)
     if exact:
