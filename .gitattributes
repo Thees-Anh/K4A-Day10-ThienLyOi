@@ -1,0 +1,16 @@
+# Keep text files consistent across Windows and Unix.
+* text=auto
+
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.csv text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Chroma/SQLite artifacts are binary and must not be line-ending converted.
+data/chroma/** binary
+data/**/*.bin binary
+data/**/*.sqlite3 binary
