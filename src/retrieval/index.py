@@ -135,12 +135,18 @@ class LocalEmbeddingIndex:
         return self.settings.paths.chroma_dir.parent / "embeddings" / filename
 
     def _write_manifest(self, manifest_path: Path) -> None:
+        try:
+            portable_persist_path = self.persist_path.relative_to(
+                self.settings.paths.project_dir
+            )
+        except ValueError:
+            portable_persist_path = self.persist_path
         write_json(
             manifest_path,
             {
                 "backend": self.embedding_backend,
                 "embedding_model": self.settings.embedding_model,
-                "persist_path": str(self.persist_path),
+                "persist_path": str(portable_persist_path),
                 "collection_name": self.collection_name,
                 "documents": self.documents,
             },
@@ -172,31 +178,30 @@ class LocalEmbeddingIndex:
             metadatas=[document["metadata"] for document in documents],
         )
 
-        manifest_path = embeddings_output_path or settings.paths.embeddings_json
-        try:
-            portable_persist_path = persist_path.relative_to(settings.paths.project_dir)
-        except ValueError:
-            portable_persist_path = persist_path
-        write_json(
-            manifest_path,
-            {
-                "backend": "chroma",
-                "embedding_model": settings.embedding_model,
-                "persist_path": str(portable_persist_path),
-                "collection_name": collection_name,
-                "documents": documents,
-            },
-        )
-        return cls(
-            settings=settings,
-            collection_name=collection_name,
-            documents=documents,
-            persist_path=persist_path,
-        )
+        self.collection = collection
+        self._set_documents(documents)
+        self._write_manifest(manifest_path)
+        return self
 
     @classmethod
-    def load(cls, settings: Settings, embeddings_path: Path | None = None) -> "LocalEmbeddingIndex":
-        payload = read_json(embeddings_path or settings.paths.embeddings_json)
+    def build(
+        cls,
+        df: pd.DataFrame,
+        settings: Settings,
+        embeddings_output_path: Path | str | None = None,
+    ) -> "LocalEmbeddingIndex":
+        collection_name = cls._derive_collection_name(settings, embeddings_output_path)
+        index = cls(settings=settings, collection_name=collection_name)
+        manifest_path = Path(embeddings_output_path or index._default_manifest_path())
+        return index._build_from_dataframe(df, manifest_path)
+
+    @classmethod
+    def load(
+        cls,
+        settings: Settings,
+        embeddings_path: Path | str | None = None,
+    ) -> "LocalEmbeddingIndex":
+        payload = read_json(Path(embeddings_path or settings.paths.embeddings_json))
         persist_path = Path(payload.get("persist_path", settings.paths.chroma_dir))
         if not persist_path.is_absolute():
             persist_path = settings.paths.project_dir / persist_path

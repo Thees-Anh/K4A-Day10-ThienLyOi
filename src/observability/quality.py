@@ -179,6 +179,7 @@ def _quality_report_path(settings: Settings, report_name: str) -> Path:
     configured = {
         "baseline": getattr(paths, "baseline_quality_report", None),
         "corrupted": getattr(paths, "corrupted_quality_report", None),
+        "repaired": getattr(paths, "repaired_quality_report", None),
     }.get(str(report_name))
     if configured is not None:
         return Path(configured)
@@ -249,7 +250,11 @@ def run_data_quality_checks(df: pd.DataFrame, settings: Settings, report_name: s
     warning.  A JSON report is written below ``data/quality/``.
     """
 
-    freshness_path = getattr(settings.paths, "freshness_report", None)
+    freshness_path = {
+        "baseline": getattr(settings.paths, "freshness_report", None),
+        "corrupted": getattr(settings.paths, "corrupted_freshness_report", None),
+        "repaired": getattr(settings.paths, "repaired_freshness_report", None),
+    }.get(str(report_name), getattr(settings.paths, "freshness_report", None))
     freshness = build_freshness_report(df, settings, freshness_path)
     validation_error: str | None = None
     validation_result: dict[str, Any]

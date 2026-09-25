@@ -143,6 +143,11 @@ def test_corruption_flow_orchestrates_degradation_and_repair(
     )
     touch_json(settings.paths.eval_testset, [{"id": "q1"}])
     touch_json(settings.paths.raw_records_json, [{"paper_id": "raw"}])
+    touch_json(settings.paths.baseline_quality_report, {"success": True})
+    touch_json(
+        settings.paths.freshness_report,
+        {"is_fresh": True, "stale_rows": 0, "total_rows": 1},
+    )
 
     def corrupt(df, log_path):
         events.append("corrupt")

@@ -36,16 +36,24 @@ class CorruptionFlowResult:
     repaired_quality: dict[str, Any]
 
 
-def _require_baseline(settings: Settings) -> tuple[dict[str, Any], Any]:
+def _require_baseline(
+    settings: Settings,
+) -> tuple[dict[str, Any], Any, dict[str, Any], dict[str, Any]]:
     try:
         baseline_metrics = load_mapping(settings.paths.baseline_metrics, "baseline metrics")
         clean_df = load_dataframe(settings.paths.clean_json, "baseline clean data")
+        baseline_quality = load_mapping(
+            settings.paths.baseline_quality_report, "baseline quality report"
+        )
+        baseline_freshness = load_mapping(
+            settings.paths.freshness_report, "baseline freshness report"
+        )
     except FileNotFoundError as exc:
         raise RuntimeError("Baseline artifacts are missing; run script/run_phase1.py first.") from exc
     if not settings.paths.eval_testset.is_file():
         raise RuntimeError("Evaluation test set is missing; run script/run_phase1.py first.")
     require_metrics(baseline_metrics, "baseline")
-    return baseline_metrics, clean_df
+    return baseline_metrics, clean_df, baseline_quality, baseline_freshness
 
 
 def _evaluate_state(settings: Settings, df, embeddings_path, metrics_path, answers_path):
@@ -65,7 +73,9 @@ def _evaluate_state(settings: Settings, df, embeddings_path, metrics_path, answe
 def main(settings: Settings | None = None) -> CorruptionFlowResult:
     """Run corruption, degradation measurement, idempotent repair, and comparison."""
     settings = settings or load_settings()
-    baseline_metrics, clean_df = _require_baseline(settings)
+    baseline_metrics, clean_df, baseline_quality, baseline_freshness = _require_baseline(
+        settings
+    )
 
     corrupted_df = corrupt_clean_dataframe(clean_df.copy(deep=True), settings.paths.corruption_log)
     require_clean_dataframe(corrupted_df, "corruption")
@@ -104,45 +114,75 @@ def main(settings: Settings | None = None) -> CorruptionFlowResult:
         settings.paths.repaired_clean_csv,
         settings.paths.repaired_clean_json,
     )
-
-    print("[4/6] Đang xây dựng index và đánh giá repaired dataset...")
-    repaired_index = _build_or_load_index(
+    repaired_quality = run_data_quality_checks(repaired_df, settings, "repaired")
+    repaired_freshness = build_freshness_report(
         repaired_df,
         settings,
+        settings.paths.repaired_freshness_report,
+    )
+    require_quality_success(repaired_quality, "repaired")
+    repaired_metrics = _evaluate_state(
+        settings,
+        repaired_df,
         settings.paths.repaired_embeddings_json,
+        settings.paths.repaired_metrics,
+        settings.paths.repaired_answers,
     )
-    repaired_evaluation = evaluate_pipeline(
-        settings=settings,
-        index=repaired_index,
-        test_set_path=settings.paths.eval_testset,
-        metrics_output_path=settings.paths.repaired_metrics,
-        answers_output_path=settings.paths.repaired_answers,
-    )
-    repaired_quality = run_data_quality_checks(repaired_df, settings, "repaired")
-    repaired_freshness = repaired_quality["freshness"]
 
-    print("[5/6] Đang sinh báo cáo đối chiếu...")
     baseline_for_report = dict(baseline_metrics)
-    baseline_for_report["quality_success"] = baseline_quality["success"]
-    baseline_for_report["freshness_success"] = baseline_freshness["is_fresh"]
-    baseline_for_report["stale_rows"] = baseline_freshness["stale_rows"]
-    baseline_for_report["total_rows"] = baseline_freshness["total_rows"]
+    baseline_for_report["quality_success"] = baseline_quality.get("success", False)
+    baseline_for_report["freshness_success"] = baseline_freshness.get("is_fresh", False)
+    baseline_for_report["stale_rows"] = baseline_freshness.get("stale_rows", 0)
+    baseline_for_report["total_rows"] = baseline_freshness.get("total_rows", 0)
     generate_corruption_report(
         settings.paths.comparison_report,
         baseline_for_report,
-        corrupted_evaluation.summary,
-        repaired_evaluation.summary,
+        corrupted_metrics,
+        repaired_metrics,
         corrupted_quality,
         repaired_quality,
         corrupted_freshness,
         repaired_freshness,
     )
 
-    print("[6/6] Hoàn tất corruption/repair flow.")
+    require_artifacts(
+        [
+            settings.paths.corruption_log,
+            settings.paths.corrupted_clean_csv,
+            settings.paths.corrupted_clean_json,
+            settings.paths.corrupted_embeddings_json,
+            settings.paths.corrupted_metrics,
+            settings.paths.corrupted_answers,
+            settings.paths.corrupted_quality_report,
+            settings.paths.corrupted_freshness_report,
+            settings.paths.repaired_clean_csv,
+            settings.paths.repaired_clean_json,
+            settings.paths.repaired_embeddings_json,
+            settings.paths.repaired_metrics,
+            settings.paths.repaired_answers,
+            settings.paths.repaired_quality_report,
+            settings.paths.repaired_freshness_report,
+            settings.paths.comparison_report,
+        ],
+        "corruption and repair pipeline",
+    )
+    print("State       Hit Rate   Token F1")
     print(
-        "Tín hiệu hoàn thành: "
-        f"corrupted_rows={len(corrupted_df)}, "
-        f"repaired_rows={len(repaired_df)}, "
-        f"corrupted_hit_rate={corrupted_evaluation.summary['retrieval_hit_rate']:.4f}, "
-        f"repaired_hit_rate={repaired_evaluation.summary['retrieval_hit_rate']:.4f}"
+        f"Baseline    {baseline_metrics['retrieval_hit_rate']:.3f}      "
+        f"{baseline_metrics['mean_token_f1']:.3f}"
+    )
+    print(
+        f"Corrupted   {corrupted_metrics['retrieval_hit_rate']:.3f}      "
+        f"{corrupted_metrics['mean_token_f1']:.3f}"
+    )
+    print(
+        f"Repaired    {repaired_metrics['retrieval_hit_rate']:.3f}      "
+        f"{repaired_metrics['mean_token_f1']:.3f}"
+    )
+    return CorruptionFlowResult(
+        baseline_metrics,
+        corrupted_metrics,
+        repaired_metrics,
+        corrupted_quality,
+        repaired_quality,
     )

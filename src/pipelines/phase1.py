@@ -57,7 +57,8 @@ def main(settings: Settings | None = None) -> Phase1Result:
     if not records:
         raise RuntimeError("Source ingestion returned no records.")
 
-    clean_df = build_clean_dataframe(records, now_utc())
+    run_at = now_utc()
+    clean_df = build_clean_dataframe(records, run_at)
     require_clean_dataframe(clean_df, "baseline cleaning")
     save_dataframe(clean_df, settings.paths.clean_csv, settings.paths.clean_json)
 
@@ -78,11 +79,14 @@ def main(settings: Settings | None = None) -> Phase1Result:
     require_metrics(metrics, "baseline")
 
     source_summary = {
-        "source_api": settings.source_api,
-        "source_query": settings.source_query,
-        "source_mode": source_mode,
+        "source": settings.source_api,
+        "mode": source_mode,
+        "query": settings.source_query,
+        "filter": settings.source_filter,
         "raw_records": len(records),
         "clean_records": len(clean_df),
+        "max_results": settings.max_results,
+        "run_at": run_at.isoformat(),
     }
     generate_phase1_report(
         settings.paths.baseline_report,
