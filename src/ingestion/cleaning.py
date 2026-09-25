@@ -140,6 +140,25 @@ def _timestamp(value: Any) -> pd.Timestamp | None:
             return None
 
 
+def _clean_text(value: object) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).split()).strip()
+
+
+def _parse_date(value: str) -> pd.Timestamp:
+    return pd.to_datetime(value, errors="coerce", utc=True)
+
+
+def _run_timestamp(run_date: datetime) -> pd.Timestamp:
+    run_ts = pd.Timestamp(run_date)
+
+    if run_ts.tzinfo is None:
+        return run_ts.tz_localize("UTC")
+
+    return run_ts.tz_convert("UTC")
+
+
 def build_clean_dataframe(records: list[PaperRecord], run_date: datetime) -> pd.DataFrame:
     """Normalize raw records into the dataframe consumed by the RAG pipeline.
 

@@ -439,6 +439,41 @@ def _request_crossref(settings: Settings) -> tuple[dict, str | bytes | None]:
 
     raise RuntimeError("Crossref API request failed after retries.") from last_error
 
+        categories = [
+            _normalize_text(category)
+            for category in item.get("subject", []) or []
+        ]
+        categories = [category for category in categories if category]
+
+        abs_url = _normalize_text(item.get("URL")) or f"https://doi.org/{paper_id}"
+
+        updated = (
+            _date_from_crossref(
+                item.get("updated")
+                or item.get("deposited")
+                or item.get("created")
+            )
+            or published
+        )
+
+        record = PaperRecord(
+            paper_id=paper_id,
+            title=title,
+            summary=summary,
+            authors=authors,
+            categories=categories,
+            primary_category=categories[0] if categories else "",
+            published=published,
+            updated=updated,
+            abs_url=abs_url,
+            pdf_url=_pdf_url_from_crossref(item, abs_url),
+            comment=f"Crossref record {paper_id}",
+        )
+
+        records.append(record)
+        seen_ids.add(paper_id)
+
+    return records
 
 def fetch_source_records(settings: Settings) -> list[PaperRecord]:
     """Fetch Crossref records, falling back to the local snapshot when needed.
