@@ -22,6 +22,16 @@ class SearchResult:
 
 
 class LocalEmbeddingIndex:
+    REQUIRED_COLUMNS = {
+        "paper_id",
+        "title",
+        "text_for_embedding",
+        "published",
+        "authors_joined",
+        "categories_joined",
+        "summary",
+    }
+
     def __init__(
         self,
         settings: Settings,
@@ -53,33 +63,27 @@ class LocalEmbeddingIndex:
 
     @staticmethod
     def _build_documents(df: pd.DataFrame) -> list[dict[str, Any]]:
-        required_columns = {
-            "paper_id",
-            "title",
-            "text_for_embedding",
-            "published",
-            "authors_joined",
-            "categories_joined",
-            "summary",
-            "abs_url",
-            "pdf_url",
-        }
-        missing_columns = sorted(required_columns.difference(df.columns))
+        missing_columns = sorted(LocalEmbeddingIndex.REQUIRED_COLUMNS.difference(df.columns))
         if missing_columns:
-            missing = ", ".join(missing_columns)
-            raise ValueError(f"Clean dataframe is missing required columns: {missing}")
+            raise ValueError(f"Cannot build retrieval index; missing columns: {', '.join(missing_columns)}")
         if df.empty:
-            raise ValueError("Cannot build an embedding index from an empty dataframe.")
+            raise ValueError("Cannot build retrieval index from an empty dataframe.")
 
+        records = df.to_dict(orient="records")
         documents: list[dict[str, Any]] = []
-        for index, row in enumerate(df.to_dict(orient="records")):
-            paper_id = str(row["paper_id"])
-            title = str(row["title"])
-            content = str(row["text_for_embedding"])
-            if not paper_id.strip() or not title.strip() or not content.strip():
-                raise ValueError(
-                    f"Record {index} has an empty paper_id, title, or text_for_embedding."
-                )
+        for index, row in enumerate(records):
+            if any(pd.isna(row[column]) for column in ("paper_id", "title", "text_for_embedding")):
+                raise ValueError(f"Row {index} has a null paper_id, title, or text_for_embedding.")
+            paper_id = str(row["paper_id"]).strip()
+            title = str(row["title"]).strip()
+            content = str(row["text_for_embedding"]).strip()
+            if not paper_id or not title or not content:
+                raise ValueError(f"Row {index} has an empty paper_id, title, or text_for_embedding.")
+
+            def metadata_text(column: str) -> str:
+                value = row.get(column, "")
+                return "" if pd.isna(value) else str(value)
+
             documents.append(
                 {
                     "record_id": f"{paper_id}::{index}",
@@ -89,12 +93,12 @@ class LocalEmbeddingIndex:
                     "metadata": {
                         "paper_id": paper_id,
                         "title": title,
-                        "published": str(row["published"]),
-                        "authors_joined": str(row["authors_joined"]),
-                        "categories_joined": str(row["categories_joined"]),
-                        "summary": str(row["summary"]),
-                        "abs_url": str(row["abs_url"]),
-                        "pdf_url": str(row["pdf_url"]),
+                        "published": metadata_text("published"),
+                        "authors_joined": metadata_text("authors_joined"),
+                        "categories_joined": metadata_text("categories_joined"),
+                        "summary": metadata_text("summary"),
+                        "abs_url": metadata_text("abs_url"),
+                        "pdf_url": metadata_text("pdf_url"),
                     },
                 }
             )
@@ -168,35 +172,39 @@ class LocalEmbeddingIndex:
             metadatas=[document["metadata"] for document in documents],
         )
 
-        self.collection = collection
-        self._set_documents(documents)
-        self._write_manifest(manifest_path)
-        return self
+        manifest_path = embeddings_output_path or settings.paths.embeddings_json
+        try:
+            portable_persist_path = persist_path.relative_to(settings.paths.project_dir)
+        except ValueError:
+            portable_persist_path = persist_path
+        write_json(
+            manifest_path,
+            {
+                "backend": "chroma",
+                "embedding_model": settings.embedding_model,
+                "persist_path": str(portable_persist_path),
+                "collection_name": collection_name,
+                "documents": documents,
+            },
+        )
+        return cls(
+            settings=settings,
+            collection_name=collection_name,
+            documents=documents,
+            persist_path=persist_path,
+        )
 
     @classmethod
-    def build(
-        cls,
-        df: pd.DataFrame,
-        settings: Settings,
-        embeddings_output_path: Path | str | None = None,
-    ) -> "LocalEmbeddingIndex":
-        collection_name = cls._derive_collection_name(settings, embeddings_output_path)
-        index = cls(settings=settings, collection_name=collection_name)
-        manifest_path = embeddings_output_path or index._default_manifest_path()
-        return index._build_from_dataframe(df, Path(manifest_path))
-
-    @classmethod
-    def load(
-        cls,
-        settings: Settings,
-        embeddings_path: Path | str | None = None,
-    ) -> "LocalEmbeddingIndex":
-        payload = read_json(Path(embeddings_path or settings.paths.embeddings_json))
+    def load(cls, settings: Settings, embeddings_path: Path | None = None) -> "LocalEmbeddingIndex":
+        payload = read_json(embeddings_path or settings.paths.embeddings_json)
+        persist_path = Path(payload.get("persist_path", settings.paths.chroma_dir))
+        if not persist_path.is_absolute():
+            persist_path = settings.paths.project_dir / persist_path
         return cls(
             settings=settings,
             collection_name=payload["collection_name"],
             documents=payload["documents"],
-            persist_path=Path(payload["persist_path"]),
+            persist_path=persist_path,
         )
 
     def build_from_clean(self, clean_path: Path | str | None = None) -> "LocalEmbeddingIndex":
@@ -209,20 +217,19 @@ class LocalEmbeddingIndex:
         return self._build_from_dataframe(dataframe, self._default_manifest_path())
 
     def search(self, query: str, top_k: int | None = None) -> list[SearchResult]:
+        if not query.strip():
+            raise ValueError("Search query must not be empty.")
         requested_results = top_k if top_k is not None else self.settings.top_k
         if requested_results <= 0:
             raise ValueError("top_k must be greater than zero.")
-        if not query.strip():
-            raise ValueError("query must not be empty.")
-
-        document_count = self.collection.count()
-        if document_count == 0:
+        result_count = min(requested_results, self.collection.count())
+        if result_count == 0:
             return []
 
         query_embedding = self.embedding_model.embed_query(query)
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=min(requested_results, document_count),
+            n_results=result_count,
             include=["documents", "metadatas", "distances"],
         )
         ids = results.get("ids", [[]])[0]
